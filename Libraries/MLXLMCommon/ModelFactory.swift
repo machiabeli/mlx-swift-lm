@@ -93,9 +93,35 @@ public protocol ModelFactory: Sendable {
         progressHandler: @Sendable @escaping (Progress) -> Void
     ) async throws -> sending ModelContext
 
+    /// Phase-aware loading method.
+    /// - Parameters:
+    ///   - hub: The HubApi instance to use for downloading
+    ///   - configuration: The model configuration
+    ///   - progressHandler: Callback for download progress
+    ///   - phaseHandler: Callback for loading phase updates
+    /// - Returns: A ModelContext with the loaded model
+    func _load(
+        hub: HubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void,
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void
+    ) async throws -> sending ModelContext
+
     func _loadContainer(
         hub: HubApi, configuration: ModelConfiguration,
         progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> ModelContainer
+
+    /// Phase-aware container loading method.
+    /// - Parameters:
+    ///   - hub: The HubApi instance to use for downloading
+    ///   - configuration: The model configuration
+    ///   - progressHandler: Callback for download progress
+    ///   - phaseHandler: Callback for loading phase updates
+    /// - Returns: A ModelContainer with the loaded model
+    func _loadContainer(
+        hub: HubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void,
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void
     ) async throws -> ModelContainer
 
 }
@@ -159,6 +185,72 @@ extension ModelFactory {
     ) async throws -> ModelContainer {
         let context = try await _load(
             hub: hub, configuration: configuration, progressHandler: progressHandler)
+        return ModelContainer(context: context)
+    }
+
+    // MARK: - Phase-aware loading methods
+
+    /// Load a model identified by a ``ModelConfiguration`` and produce a ``ModelContext``,
+    /// with phase reporting for granular progress feedback.
+    ///
+    /// - Parameters:
+    ///   - hub: The HubApi instance to use for downloading (defaults to ``defaultHubApi``)
+    ///   - configuration: The model configuration
+    ///   - progressHandler: Callback for download progress
+    ///   - phaseHandler: Callback for loading phase updates
+    /// - Returns: A ``ModelContext`` with the loaded model
+    public func load(
+        hub: HubApi = defaultHubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+    ) async throws -> sending ModelContext {
+        try await _load(
+            hub: hub, configuration: configuration,
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+
+    /// Load a model identified by a ``ModelConfiguration`` and produce a ``ModelContainer``,
+    /// with phase reporting for granular progress feedback.
+    ///
+    /// - Parameters:
+    ///   - hub: The HubApi instance to use for downloading (defaults to ``defaultHubApi``)
+    ///   - configuration: The model configuration
+    ///   - progressHandler: Callback for download progress
+    ///   - phaseHandler: Callback for loading phase updates
+    /// - Returns: A ``ModelContainer`` with the loaded model
+    public func loadContainer(
+        hub: HubApi = defaultHubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+    ) async throws -> ModelContainer {
+        try await _loadContainer(
+            hub: hub, configuration: configuration,
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+
+    /// Default implementation of phase-aware `_load` that forwards to the non-phase version.
+    /// Conforming types can override this to provide actual phase reporting.
+    public func _load(
+        hub: HubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void,
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void
+    ) async throws -> sending ModelContext {
+        // Default: just call the non-phase version
+        try await _load(hub: hub, configuration: configuration, progressHandler: progressHandler)
+    }
+
+    /// Default implementation of phase-aware `_loadContainer` that uses the phase-aware `_load`.
+    public func _loadContainer(
+        hub: HubApi = defaultHubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+    ) async throws -> ModelContainer {
+        let context = try await _load(
+            hub: hub, configuration: configuration,
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
         return ModelContainer(context: context)
     }
 
@@ -285,6 +377,157 @@ public func loadModelContainer(
     try await load {
         try await $0.loadContainer(
             hub: hub, configuration: .init(directory: directory), progressHandler: progressHandler)
+    }
+}
+
+// MARK: - Phase-aware top-level convenience functions
+
+/// Load a model given a ``ModelConfiguration`` with phase reporting.
+///
+/// This will load and return a ``ModelContext``. This holds the model and tokenizer without
+/// an `actor` providing an isolation context. Use this call when you control the isolation context
+/// and can hold the ``ModelContext`` directly.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - configuration: a ``ModelConfiguration``
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContext``
+public func loadModel(
+    hub: HubApi = defaultHubApi, configuration: ModelConfiguration,
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContext {
+    try await load {
+        try await $0.load(
+            hub: hub, configuration: configuration,
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+}
+
+/// Load a model container given a ``ModelConfiguration`` with phase reporting.
+///
+/// This will load and return a ``ModelContainer``. This holds a ``ModelContext``
+/// inside an actor providing isolation control for the values.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - configuration: a ``ModelConfiguration``
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContainer``
+public func loadModelContainer(
+    hub: HubApi = defaultHubApi, configuration: ModelConfiguration,
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContainer {
+    try await load {
+        try await $0.loadContainer(
+            hub: hub, configuration: configuration,
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+}
+
+/// Load a model given a huggingface identifier with phase reporting.
+///
+/// This will load and return a ``ModelContext``. This holds the model and tokenizer without
+/// an `actor` providing an isolation context. Use this call when you control the isolation context
+/// and can hold the ``ModelContext`` directly.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - id: huggingface model identifier, e.g "mlx-community/Qwen3-4B-4bit"
+///   - revision: the revision to use (defaults to "main")
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContext``
+public func loadModel(
+    hub: HubApi = defaultHubApi, id: String, revision: String = "main",
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContext {
+    try await load {
+        try await $0.load(
+            hub: hub, configuration: .init(id: id, revision: revision),
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+}
+
+/// Load a model container given a huggingface identifier with phase reporting.
+///
+/// This will load and return a ``ModelContainer``. This holds a ``ModelContext``
+/// inside an actor providing isolation control for the values.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - id: huggingface model identifier, e.g "mlx-community/Qwen3-4B-4bit"
+///   - revision: the revision to use (defaults to "main")
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContainer``
+public func loadModelContainer(
+    hub: HubApi = defaultHubApi, id: String, revision: String = "main",
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContainer {
+    try await load {
+        try await $0.loadContainer(
+            hub: hub, configuration: .init(id: id, revision: revision),
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+}
+
+/// Load a model given a directory of configuration and weights with phase reporting.
+///
+/// This will load and return a ``ModelContext``. This holds the model and tokenizer without
+/// an `actor` providing an isolation context. Use this call when you control the isolation context
+/// and can hold the ``ModelContext`` directly.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - directory: directory of configuration and weights
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContext``
+public func loadModel(
+    hub: HubApi = defaultHubApi, directory: URL,
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContext {
+    try await load {
+        try await $0.load(
+            hub: hub, configuration: .init(directory: directory),
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
+    }
+}
+
+/// Load a model container given a directory of configuration and weights with phase reporting.
+///
+/// This will load and return a ``ModelContainer``. This holds a ``ModelContext``
+/// inside an actor providing isolation control for the values.
+///
+/// - Parameters:
+///   - hub: optional HubApi -- by default uses ``defaultHubApi``
+///   - directory: directory of configuration and weights
+///   - progressHandler: optional callback for download progress
+///   - phaseHandler: optional callback for loading phase updates
+/// - Returns: a ``ModelContainer``
+public func loadModelContainer(
+    hub: HubApi = defaultHubApi, directory: URL,
+    progressHandler: @Sendable @escaping (Progress) -> Void = { _ in },
+    phaseHandler: @Sendable @escaping (LoadingPhase) -> Void = { _ in }
+) async throws -> sending ModelContainer {
+    try await load {
+        try await $0.loadContainer(
+            hub: hub, configuration: .init(directory: directory),
+            progressHandler: progressHandler, phaseHandler: phaseHandler
+        )
     }
 }
 
