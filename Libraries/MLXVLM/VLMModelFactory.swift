@@ -341,7 +341,7 @@ public final class VLMModelFactory: ModelFactory {
 
             let model: LanguageModel
             do {
-                model = try typeRegistry.createModel(
+                model = try await typeRegistry.createModel(
                     configuration: configurationURL, modelType: baseConfig.modelType)
             } catch let error as DecodingError {
                 throw ModelFactoryError.configurationDecodingError(
@@ -372,7 +372,7 @@ public final class VLMModelFactory: ModelFactory {
                     processorConfigurationURL.lastPathComponent, configuration.name, error)
             }
 
-            let processor = try processorRegistry.createModel(
+            let processor = try await processorRegistry.createModel(
                 configuration: processorConfigurationURL,
                 processorType: baseProcessorConfig.processorClass, tokenizer: tokenizer)
 
