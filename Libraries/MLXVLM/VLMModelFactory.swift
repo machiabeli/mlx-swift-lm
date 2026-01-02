@@ -303,6 +303,91 @@ public final class VLMModelFactory: ModelFactory {
             configuration: configuration, model: model, processor: processor, tokenizer: tokenizer)
     }
 
+    /// Phase-aware loading implementation for VLM models.
+    ///
+    /// This method provides granular progress feedback during model loading through
+    /// the `phaseHandler` callback.
+    ///
+    /// - Parameters:
+    ///   - hub: The HubApi instance to use for downloading
+    ///   - configuration: The model configuration
+    ///   - progressHandler: Callback for download progress
+    ///   - phaseHandler: Callback for loading phase updates
+    /// - Returns: A ModelContext with the loaded model
+    public func _load(
+        hub: HubApi, configuration: ModelConfiguration,
+        progressHandler: @Sendable @escaping (Progress) -> Void,
+        phaseHandler: @Sendable @escaping (LoadingPhase) -> Void
+    ) async throws -> sending ModelContext {
+        do {
+            // Download weights and config with phase reporting
+            let modelDirectory = try await downloadModel(
+                hub: hub, configuration: configuration,
+                progressHandler: progressHandler,
+                phaseHandler: phaseHandler
+            )
+
+            // Load the generic config
+            let configurationURL = modelDirectory.appending(component: "config.json")
+
+            let baseConfig: BaseConfiguration
+            do {
+                baseConfig = try JSONDecoder().decode(
+                    BaseConfiguration.self, from: Data(contentsOf: configurationURL))
+            } catch let error as DecodingError {
+                throw ModelFactoryError.configurationDecodingError(
+                    configurationURL.lastPathComponent, configuration.name, error)
+            }
+
+            let model: LanguageModel
+            do {
+                model = try typeRegistry.createModel(
+                    configuration: configurationURL, modelType: baseConfig.modelType)
+            } catch let error as DecodingError {
+                throw ModelFactoryError.configurationDecodingError(
+                    configurationURL.lastPathComponent, configuration.name, error)
+            }
+
+            // Apply weights with phase reporting
+            try loadWeights(
+                modelDirectory: modelDirectory, model: model,
+                perLayerQuantization: baseConfig.perLayerQuantization,
+                phaseHandler: phaseHandler
+            )
+
+            // Load tokenizer with phase reporting
+            phaseHandler(.loadingTokenizer)
+            let tokenizer = try await loadTokenizer(configuration: configuration, hub: hub)
+
+            let processorConfigurationURL = modelDirectory.appending(
+                component: "preprocessor_config.json")
+
+            let baseProcessorConfig: BaseProcessorConfiguration
+            do {
+                baseProcessorConfig = try JSONDecoder().decode(
+                    BaseProcessorConfiguration.self,
+                    from: Data(contentsOf: processorConfigurationURL))
+            } catch let error as DecodingError {
+                throw ModelFactoryError.configurationDecodingError(
+                    processorConfigurationURL.lastPathComponent, configuration.name, error)
+            }
+
+            let processor = try processorRegistry.createModel(
+                configuration: processorConfigurationURL,
+                processorType: baseProcessorConfig.processorClass, tokenizer: tokenizer)
+
+            phaseHandler(.ready)
+
+            return .init(
+                configuration: configuration, model: model, processor: processor, tokenizer: tokenizer
+            )
+
+        } catch {
+            phaseHandler(.failed(LoadingError(phase: "loading", error: error)))
+            throw error
+        }
+    }
+
 }
 
 public class TrampolineModelFactory: NSObject, ModelFactoryTrampoline {
