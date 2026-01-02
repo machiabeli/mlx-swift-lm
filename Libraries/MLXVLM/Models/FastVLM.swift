@@ -1169,7 +1169,7 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
 /// - Image precedes text content
 /// - Empty system messages are removed - the chat template applies a default one in this case
 public struct FastVLMMessageGenerator: MessageGenerator {
-    public func generate(message: Chat.Message) -> Message {
+    public func generate(message: Chat.Message) -> MLXLMCommon.Message {
         [
             "role": message.role.rawValue,
             "content": []
